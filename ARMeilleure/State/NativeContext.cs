@@ -13,7 +13,7 @@ namespace ARMeilleure.State
             public fixed ulong V[RegisterConsts.VecRegsCount * 2];
             public fixed uint Flags[RegisterConsts.FlagsCount];
             public fixed uint FpFlags[RegisterConsts.FpFlagsCount];
-            public int Counter;
+            public int InterruptState;
             public ulong CallAddress;
             public ulong ExclusiveAddress;
             public ulong ExclusiveValueLow;
@@ -114,8 +114,8 @@ namespace ARMeilleure.State
             GetStorage().FpFlags[(int)flag] = value ? 1u : 0u;
         }
 
-        public int GetCounter() => GetStorage().Counter;
-        public void SetCounter(int value) => GetStorage().Counter = value;
+        public int GetInterruptState() => GetStorage().InterruptState;
+        public void SetInterruptState(int value) => GetStorage().InterruptState = value;
 
         public unsafe static int GetRegisterOffset(Register reg)
         {
@@ -157,9 +157,9 @@ namespace ARMeilleure.State
             }
         }
 
-        public static int GetCounterOffset()
+        public static int GetInterruptStateOffset()
         {
-            return StorageOffset(ref _dummyStorage, ref _dummyStorage.Counter);
+            return StorageOffset(ref _dummyStorage, ref _dummyStorage.InterruptState);
         }
 
         public static int GetCallAddressOffset()
