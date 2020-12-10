@@ -101,7 +101,11 @@ namespace ARMeilleure.State
         internal void CheckInterrupt()
         {
             _nativeContext.SetInterruptState(0);
-            Interrupt?.Invoke(this, EventArgs.Empty);
+
+            if (Running)
+            {
+                Interrupt?.Invoke(this, EventArgs.Empty);
+            }
         }
 
         public void RequestInterrupt()
