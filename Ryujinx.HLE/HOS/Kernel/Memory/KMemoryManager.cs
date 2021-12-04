@@ -1370,15 +1370,6 @@ namespace Ryujinx.HLE.HOS.Kernel.Memory
 
         private void MapPhysicalMemory(KPageList pageList, ulong address, ulong endAddr)
         {
-            foreach (var pn in pageList.Nodes)
-            {
-                for (ulong i = 0; i < pn.PagesCount * PageSize; i += 8)
-                {
-                    _context.Memory.Write<ulong>(GetDramAddressFromPa(pn.Address) + i, 0xAAAAAAAABBBBBBBBUL);
-                }
-
-            }
-
             LinkedListNode<KPageNode> pageListNode = pageList.Nodes.First;
 
             KPageNode pageNode = pageListNode.Value;
