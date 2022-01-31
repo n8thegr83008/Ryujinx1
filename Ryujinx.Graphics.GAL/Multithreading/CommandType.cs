@@ -74,6 +74,7 @@
         SetIndexBuffer,
         SetLineParameters,
         SetLogicOpState,
+        SetMultisampleState,
         SetPatchParameters,
         SetPointParameters,
         SetPolygonMode,

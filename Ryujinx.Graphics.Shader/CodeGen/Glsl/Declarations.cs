@@ -628,7 +628,8 @@ namespace Ryujinx.Graphics.Shader.CodeGen.Glsl
             {
                 case ShaderStage.Fragment:
                 case ShaderStage.Vertex:
-                    context.AppendLine($"uint {DefaultNames.SupportBlockAlphaTestName};");
+                    context.AppendLine($"uint {DefaultNames.SupportBlockAlphaToCoverageDitherName};");
+                    // context.AppendLine($"uint {DefaultNames.SupportBlockAlphaTestName};");
                     context.AppendLine($"bool {DefaultNames.SupportBlockIsBgraName}[{SupportBuffer.FragmentIsBgraCount}];");
                     context.AppendLine($"int {DefaultNames.SupportBlockFragmentScaleCount};");
                     break;

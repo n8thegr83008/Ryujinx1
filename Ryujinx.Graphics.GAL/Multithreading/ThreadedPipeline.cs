@@ -1,7 +1,6 @@
 ﻿using Ryujinx.Graphics.GAL.Multithreading.Commands;
 using Ryujinx.Graphics.GAL.Multithreading.Model;
 using Ryujinx.Graphics.GAL.Multithreading.Resources;
-using Ryujinx.Graphics.Shader;
 using System;
 using System.Linq;
 
@@ -182,6 +181,12 @@ namespace Ryujinx.Graphics.GAL.Multithreading
         public void SetLogicOpState(bool enable, LogicalOp op)
         {
             _renderer.New<SetLogicOpStateCommand>().Set(enable, op);
+            _renderer.QueueCommand();
+        }
+
+        public void SetMultisampleState(MultisampleDescriptor multisample)
+        {
+            _renderer.New<SetMultisampleStateCommand>().Set(multisample);
             _renderer.QueueCommand();
         }
 
