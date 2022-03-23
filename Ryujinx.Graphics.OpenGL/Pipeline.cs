@@ -53,7 +53,9 @@ namespace Ryujinx.Graphics.OpenGL
         private ClipOrigin _clipOrigin;
         private ClipDepthMode _clipDepthMode;
 
-        private readonly uint[] _componentMasks;
+        private uint _fragmentOutputMap;
+        private uint _componentMasks;
+        private uint _currentComponentMasks;
 
         private uint _scissorEnables;
 
@@ -73,12 +75,8 @@ namespace Ryujinx.Graphics.OpenGL
             _clipOrigin = ClipOrigin.LowerLeft;
             _clipDepthMode = ClipDepthMode.NegativeOneToOne;
 
-            _componentMasks = new uint[Constants.MaxRenderTargets];
-
-            for (int index = 0; index < Constants.MaxRenderTargets; index++)
-            {
-                _componentMasks[index] = 0xf;
-            }
+            _fragmentOutputMap = uint.MaxValue;
+            _componentMasks = uint.MaxValue;
 
             var defaultScale = new Vector4<float> { X = 1f, Y = 0f, Z = 0f, W = 0f };
             new Span<Vector4<float>>(_renderScale).Fill(defaultScale);
@@ -614,7 +612,7 @@ namespace Ryujinx.Graphics.OpenGL
                     _program?.Bind();
                     _unit0Sampler?.Bind(0);
 
-                    GL.ViewportArray(0, 1, _viewportArray);
+                    RestoreViewport0();
 
                     Enable(EnableCap.CullFace, _cullEnable);
                     Enable(EnableCap.StencilTest, _stencilTestEnable);
@@ -1001,18 +999,30 @@ namespace Ryujinx.Graphics.OpenGL
 
         public void SetProgram(IProgram program)
         {
-            _program = (Program)program;
+            Program prg = (Program)program;
 
             if (_tfEnabled)
             {
                 GL.EndTransformFeedback();
-                _program.Bind();
+                prg.Bind();
                 GL.BeginTransformFeedback(_tfTopology);
             }
             else
             {
-                _program.Bind();
+                prg.Bind();
             }
+
+            if (prg.HasFragmentShader && _fragmentOutputMap != (uint)prg.FragmentOutputMap)
+            {
+                _fragmentOutputMap = (uint)prg.FragmentOutputMap;
+
+                for (int index = 0; index < Constants.MaxRenderTargets; index++)
+                {
+                    RestoreComponentMask(index, force: false);
+                }
+            }
+
+            _program = prg;
         }
 
         public void SetRasterizerDiscard(bool discard)
@@ -1037,11 +1047,13 @@ namespace Ryujinx.Graphics.OpenGL
 
         public void SetRenderTargetColorMasks(ReadOnlySpan<uint> componentMasks)
         {
+            _componentMasks = 0;
+
             for (int index = 0; index < componentMasks.Length; index++)
             {
-                _componentMasks[index] = componentMasks[index];
+                _componentMasks |= componentMasks[index] << (index * 4);
 
-                RestoreComponentMask(index);
+                RestoreComponentMask(index, force: false);
             }
         }
 
@@ -1082,45 +1094,25 @@ namespace Ryujinx.Graphics.OpenGL
             _framebuffer.SetDrawBuffers(colors.Length);
         }
 
-        public void SetSampler(int binding, ISampler sampler)
+        public unsafe void SetScissors(ReadOnlySpan<Rectangle<int>> regions)
         {
-            if (sampler == null)
+            int count = Math.Min(regions.Length, Constants.MaxViewports);
+
+            int* v = stackalloc int[count * 4];
+
+            for (int index = 0; index < count; index++)
             {
-                return;
-            }
+                int vIndex = index * 4;
 
-            Sampler samp = (Sampler)sampler;
+                v[vIndex] = regions[index].X;
+                v[vIndex + 1] = regions[index].Y;
+                v[vIndex + 2] = regions[index].Width;
+                v[vIndex + 3] = regions[index].Height;
 
-            if (binding == 0)
-            {
-                _unit0Sampler = samp;
-            }
-
-            samp.Bind(binding);
-        }
-
-        public void SetScissor(int index, bool enable, int x, int y, int width, int height)
-        {
-            uint mask = 1u << index;
-
-            if (!enable)
-            {
-                if ((_scissorEnables & mask) != 0)
-                {
-                    _scissorEnables &= ~mask;
-                    GL.Disable(IndexedEnableCap.ScissorTest, index);
-                }
-
-                return;
-            }
-
-            if ((_scissorEnables & mask) == 0)
-            {
-                _scissorEnables |= mask;
                 GL.Enable(IndexedEnableCap.ScissorTest, index);
             }
 
-            GL.ScissorIndexed(index, x, y, width, height);
+            GL.ScissorArray(0, count, v);
         }
 
         public void SetStencilTest(StencilTestDescriptor stencilTest)
@@ -1171,22 +1163,24 @@ namespace Ryujinx.Graphics.OpenGL
             SetBuffers(first, buffers, isStorage: true);
         }
 
-        public void SetTexture(int binding, ITexture texture)
+        public void SetTextureAndSampler(int binding, ITexture texture, ISampler sampler)
         {
-            if (texture == null)
+            if (texture != null && sampler != null)
             {
-                return;
-            }
+                if (binding == 0)
+                {
+                    _unit0Texture = (TextureBase)texture;
+                    _unit0Sampler = (Sampler)sampler;
+                }
+                else
+                {
+                    ((TextureBase)texture).Bind(binding);
+                }
 
-            if (binding == 0)
-            {
-                _unit0Texture = (TextureBase)texture;
-            }
-            else
-            {
-                ((TextureBase)texture).Bind(binding);
+                ((Sampler)sampler).Bind(binding);
             }
         }
+
 
         public void SetTransformFeedbackBuffers(ReadOnlySpan<BufferRange> buffers)
         {
@@ -1436,18 +1430,39 @@ namespace Ryujinx.Graphics.OpenGL
             }
         }
 
-        public void RestoreComponentMask(int index)
+        public void RestoreComponentMask(int index, bool force = true)
         {
             // If the bound render target is bgra, swap the red and blue masks.
             uint redMask = _fpIsBgra[index].X == 0 ? 1u : 4u;
             uint blueMask = _fpIsBgra[index].X == 0 ? 4u : 1u;
 
+            int shift = index * 4;
+            uint componentMask = _componentMasks & _fragmentOutputMap;
+            uint checkMask = 0xfu << shift;
+            uint componentMaskAtIndex = componentMask & checkMask;
+
+            if (!force && componentMaskAtIndex == (_currentComponentMasks & checkMask))
+            {
+                return;
+            }
+
+            componentMask >>= shift;
+            componentMask &= 0xfu;
+
             GL.ColorMask(
                 index,
-                (_componentMasks[index] & redMask) != 0,
-                (_componentMasks[index] & 2u) != 0,
-                (_componentMasks[index] & blueMask) != 0,
-                (_componentMasks[index] & 8u) != 0);
+                (componentMask & redMask) != 0,
+                (componentMask & 2u) != 0,
+                (componentMask & blueMask) != 0,
+                (componentMask & 8u) != 0);
+
+            _currentComponentMasks &= ~checkMask;
+            _currentComponentMasks |= componentMaskAtIndex;
+        }
+
+        public void RestoreClipControl()
+        {
+            GL.ClipControl(_clipOrigin, _clipDepthMode);
         }
 
         public void RestoreScissor0Enable()
@@ -1463,6 +1478,14 @@ namespace Ryujinx.Graphics.OpenGL
             if (_rasterizerDiscard)
             {
                 GL.Enable(EnableCap.RasterizerDiscard);
+            }
+        }
+
+        public void RestoreViewport0()
+        {
+            if (_viewportArray.Length > 0)
+            {
+                GL.ViewportArray(0, 1, _viewportArray);
             }
         }
 

@@ -100,7 +100,7 @@ namespace Ryujinx.Headless.SDL2
         [Option("system-language", Required = false, Default = SystemLanguage.AmericanEnglish, HelpText = "Change System Language.")]
         public SystemLanguage SystemLanguage { get; set; }
 
-        [Option("system-language", Required = false, Default = RegionCode.USA, HelpText = "Change System Region.")]
+        [Option("system-region", Required = false, Default = RegionCode.USA, HelpText = "Change System Region.")]
         public RegionCode SystemRegion { get; set; }
 
         [Option("system-timezone", Required = false, Default = "UTC", HelpText = "Change System TimeZone.")]
@@ -132,8 +132,11 @@ namespace Ryujinx.Headless.SDL2
         [Option("enable-warning-logs", Required = false, Default = true, HelpText = "Enables printing warning log messages.")]
         public bool? LoggingEnableWarning { get; set; }
 
-        [Option("enable-warning-logs", Required = false, Default = true, HelpText = "Enables printing error log messages.")]
+        [Option("enable-error-logs", Required = false, Default = true, HelpText = "Enables printing error log messages.")]
         public bool? LoggingEnableError { get; set; }
+
+        [Option("enable-trace-logs", Required = false, Default = false, HelpText = "Enables printing trace log messages.")]
+        public bool? LoggingEnableTrace { get; set; }
 
         [Option("enable-guest-logs", Required = false, Default = true, HelpText = "Enables printing guest log messages.")]
         public bool? LoggingEnableGuest { get; set; }
@@ -160,6 +163,9 @@ namespace Ryujinx.Headless.SDL2
 
         [Option("graphics-shaders-dump-path", Required = false, HelpText = "Dumps shaders in this local directory. (Developer only)")]
         public string GraphicsShadersDumpPath { get; set; }
+
+        [Option("graphics-backend", Required = false, Default = GraphicsBackend.OpenGl, HelpText = "Change Graphics Backend to use.")]
+        public GraphicsBackend GraphicsBackend { get; set; }
 
         // Hacks
 

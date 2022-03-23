@@ -1,4 +1,5 @@
 using Ryujinx.Graphics.Shader.CodeGen.Glsl;
+using Ryujinx.Graphics.Shader.CodeGen.Spirv;
 using Ryujinx.Graphics.Shader.Decoders;
 using Ryujinx.Graphics.Shader.IntermediateRepresentation;
 using Ryujinx.Graphics.Shader.StructuredIr;
@@ -25,15 +26,9 @@ namespace Ryujinx.Graphics.Shader.Translation
             }
         }
 
-        public static TranslatorContext CreateContext(
-            ulong address,
-            IGpuAccessor gpuAccessor,
-            TranslationOptions options,
-            TranslationCounts counts = null)
+        public static TranslatorContext CreateContext(ulong address, IGpuAccessor gpuAccessor, TranslationOptions options)
         {
-            counts ??= new TranslationCounts();
-
-            return DecodeShader(address, gpuAccessor, options, counts);
+            return DecodeShader(address, gpuAccessor, options);
         }
 
         internal static ShaderProgram Translate(FunctionCode[] functions, ShaderConfig config, out ShaderProgramInfo shaderProgramInfo)
@@ -78,25 +73,20 @@ namespace Ryujinx.Graphics.Shader.Translation
                     Ssa.Rename(cfg.Blocks);
 
                     Optimizer.RunPass(cfg.Blocks, config);
-
                     Rewriter.RunPass(cfg.Blocks, config);
                 }
 
                 funcs[i] = new Function(cfg.Blocks, $"fun{i}", false, inArgumentsCount, outArgumentsCount);
             }
 
-            StructuredProgramInfo sInfo = StructuredProgram.MakeStructuredProgram(funcs, config);
+            var sInfo = StructuredProgram.MakeStructuredProgram(funcs, config);
 
-            ShaderProgram program;
-
-            switch (config.Options.TargetLanguage)
+            ShaderProgram program = config.Options.TargetLanguage switch
             {
-                case TargetLanguage.Glsl:
-                    program = new ShaderProgram(config.Stage, GlslGenerator.Generate(sInfo, config));
-                    break;
-                default:
-                    throw new NotImplementedException(config.Options.TargetLanguage.ToString());
-            }
+                TargetLanguage.Glsl => new ShaderProgram(config.Stage, GlslGenerator.Generate(sInfo, config)),
+                TargetLanguage.Spirv => new ShaderProgram(config.Stage, SpirvGenerator.Generate(sInfo, config)),
+                _ => throw new NotImplementedException(config.Options.TargetLanguage.ToString())
+            };
 
             shaderProgramInfo = new ShaderProgramInfo(
                 config.GetConstantBufferDescriptors(),
@@ -105,26 +95,27 @@ namespace Ryujinx.Graphics.Shader.Translation
                 config.GetImageDescriptors(),
                 config.UsedFeatures.HasFlag(FeatureFlags.InstanceId),
                 config.UsedFeatures.HasFlag(FeatureFlags.RtLayer),
-                config.ClipDistancesWritten);
+                config.ClipDistancesWritten,
+                config.OmapTargets);
 
             return program;
         }
 
-        private static TranslatorContext DecodeShader(ulong address, IGpuAccessor gpuAccessor, TranslationOptions options, TranslationCounts counts)
+        private static TranslatorContext DecodeShader(ulong address, IGpuAccessor gpuAccessor, TranslationOptions options)
         {
             ShaderConfig config;
             DecodedProgram program;
             ulong maxEndAddress = 0;
 
-            if ((options.Flags & TranslationFlags.Compute) != 0)
+            if (options.Flags.HasFlag(TranslationFlags.Compute))
             {
-                config = new ShaderConfig(gpuAccessor, options, counts);
+                config = new ShaderConfig(gpuAccessor, options);
 
                 program = Decoder.Decode(config, address);
             }
             else
             {
-                config = new ShaderConfig(new ShaderHeader(gpuAccessor, address), gpuAccessor, options, counts);
+                config = new ShaderConfig(new ShaderHeader(gpuAccessor, address), gpuAccessor, options);
 
                 program = Decoder.Decode(config, address + HeaderSize);
             }
@@ -213,24 +204,31 @@ namespace Ryujinx.Graphics.Shader.Translation
                 InitializeOutput(context, AttributeConsts.PositionX, perPatch: false);
             }
 
-            int usedAttributes = context.Config.UsedOutputAttributes;
-            while (usedAttributes != 0)
+            UInt128 usedAttributes = context.Config.NextInputAttributesComponents;
+            while (usedAttributes != UInt128.Zero)
             {
-                int index = BitOperations.TrailingZeroCount(usedAttributes);
+                int index = usedAttributes.TrailingZeroCount();
+                int vecIndex = index / 4;
 
-                InitializeOutput(context, AttributeConsts.UserAttributeBase + index * 16, perPatch: false);
+                usedAttributes &= ~UInt128.Pow2(index);
 
-                usedAttributes &= ~(1 << index);
+                // We don't need to initialize passthrough attributes.
+                if ((context.Config.PassthroughAttributes & (1 << vecIndex)) != 0)
+                {
+                    continue;
+                }
+
+                InitializeOutputComponent(context, AttributeConsts.UserAttributeBase + index * 4, perPatch: false);
             }
 
-            int usedAttributesPerPatch = context.Config.UsedOutputAttributesPerPatch;
-            while (usedAttributesPerPatch != 0)
+            UInt128 usedAttributesPerPatch = context.Config.NextInputAttributesPerPatchComponents;
+            while (usedAttributesPerPatch != UInt128.Zero)
             {
-                int index = BitOperations.TrailingZeroCount(usedAttributesPerPatch);
+                int index = usedAttributesPerPatch.TrailingZeroCount();
 
-                InitializeOutput(context, AttributeConsts.UserAttributeBase + index * 16, perPatch: true);
+                InitializeOutputComponent(context, AttributeConsts.UserAttributeBase + index * 4, perPatch: true);
 
-                usedAttributesPerPatch &= ~(1 << index);
+                usedAttributesPerPatch &= ~UInt128.Pow2(index);
             }
 
             if (config.NextUsesFixedFuncAttributes)
@@ -257,6 +255,12 @@ namespace Ryujinx.Graphics.Shader.Translation
                 int attrOffset = baseAttr + c * 4;
                 context.Copy(perPatch ? AttributePerPatch(attrOffset) : Attribute(attrOffset), ConstF(c == 3 ? 1f : 0f));
             }
+        }
+
+        private static void InitializeOutputComponent(EmitterContext context, int attrOffset, bool perPatch)
+        {
+            int c = (attrOffset >> 2) & 3;
+            context.Copy(perPatch ? AttributePerPatch(attrOffset) : Attribute(attrOffset), ConstF(c == 3 ? 1f : 0f));
         }
 
         private static void EmitOps(EmitterContext context, Block block)

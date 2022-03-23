@@ -28,6 +28,7 @@ using Ryujinx.Configuration;
 using Ryujinx.Graphics.GAL;
 using Ryujinx.Graphics.GAL.Multithreading;
 using Ryujinx.Graphics.OpenGL;
+using Ryujinx.Graphics.Vulkan;
 using Ryujinx.HLE.FileSystem;
 using Ryujinx.HLE.FileSystem.Content;
 using Ryujinx.HLE.HOS;
@@ -42,6 +43,8 @@ using Ryujinx.Ui.Applet;
 using Ryujinx.Ui.Helper;
 using Ryujinx.Ui.Widgets;
 using Ryujinx.Ui.Windows;
+using Silk.NET.Vulkan;
+using SPB.Graphics.Vulkan;
 
 using GUI = Gtk.Builder.ObjectAttribute;
 
@@ -82,8 +85,6 @@ namespace Ryujinx.Ui
 
         public bool IsFocused;
 
-        private static bool UseVulkan = false;
-
 #pragma warning disable CS0169, CS0649, IDE0044
 
         [GUI] public MenuItem ExitMenuItem;
@@ -107,6 +108,7 @@ namespace Ryujinx.Ui
         [GUI] MenuItem        _hideUi;
         [GUI] MenuItem        _fullScreen;
         [GUI] CheckMenuItem   _startFullScreen;
+        [GUI] CheckMenuItem   _showConsole;
         [GUI] CheckMenuItem   _favToggle;
         [GUI] MenuItem        _firmwareInstallDirectory;
         [GUI] MenuItem        _firmwareInstallFile;
@@ -120,6 +122,7 @@ namespace Ryujinx.Ui
         [GUI] CheckMenuItem   _fileExtToggle;
         [GUI] CheckMenuItem   _pathToggle;
         [GUI] CheckMenuItem   _fileSizeToggle;
+        [GUI] Label           _gpuBackend;
         [GUI] Label           _dockedMode;
         [GUI] Label           _aspectRatio;
         [GUI] Label           _gameStatus;
@@ -178,7 +181,7 @@ namespace Ryujinx.Ui
             VirtualFileSystem.FixExtraData(_libHacHorizonManager.RyujinxClient);
 
             _contentManager         = new ContentManager(_virtualFileSystem);
-            _accountManager         = new AccountManager(_libHacHorizonManager.RyujinxClient);
+            _accountManager         = new AccountManager(_libHacHorizonManager.RyujinxClient, Program.CommandLineProfile);
             _userChannelPersistence = new UserChannelPersistence();
 
             // Instantiate GUI objects.
@@ -212,6 +215,9 @@ namespace Ryujinx.Ui
             {
                 _startFullScreen.Active = true;
             }
+
+            _showConsole.Active = ConfigurationState.Instance.Ui.ShowConsole.Value;
+            _showConsole.Visible = ConsoleHelper.SetConsoleWindowStateSupported;
 
             _actionMenu.Sensitive = false;
             _pauseEmulation.Sensitive = false;
@@ -403,9 +409,10 @@ namespace Ryujinx.Ui
 
             IRenderer renderer;
 
-            if (UseVulkan)
+            if (ConfigurationState.Instance.Graphics.GraphicsBackend == GraphicsBackend.Vulkan)
             {
-                throw new NotImplementedException();
+                renderer = new VulkanGraphicsDevice((instance, vk) => new SurfaceKHR((ulong)((VKRenderer)RendererWidget).CreateWindowSurface(instance.Handle)),
+                                                    VulkanHelper.GetRequiredInstanceExtensions);
             }
             else
             {
@@ -638,18 +645,18 @@ namespace Ryujinx.Ui
         [Conditional("RELEASE")]
         public void PerformanceCheck()
         {
-            if (ConfigurationState.Instance.Logger.EnableDebug.Value)
+            if (ConfigurationState.Instance.Logger.EnableTrace.Value)
             {
                 MessageDialog debugWarningDialog = new MessageDialog(this, DialogFlags.Modal, MessageType.Warning, ButtonsType.YesNo, null)
                 {
                     Title         = "Ryujinx - Warning",
-                    Text          = "You have debug logging enabled, which is designed to be used by developers only.",
-                    SecondaryText = "For optimal performance, it's recommended to disable debug logging. Would you like to disable debug logging now?"
+                    Text          = "You have trace logging enabled, which is designed to be used by developers only.",
+                    SecondaryText = "For optimal performance, it's recommended to disable trace logging. Would you like to disable trace logging now?"
                 };
 
                 if (debugWarningDialog.Run() == (int)ResponseType.Yes)
                 {
-                    ConfigurationState.Instance.Logger.EnableDebug.Value = false;
+                    ConfigurationState.Instance.Logger.EnableTrace.Value = false;
                     SaveConfig();
                 }
 
@@ -872,7 +879,7 @@ namespace Ryujinx.Ui
 
         private RendererWidgetBase CreateRendererWidget()
         {
-            if (UseVulkan)
+            if (ConfigurationState.Instance.Graphics.GraphicsBackend == GraphicsBackend.Vulkan)
             {
                 return new VKRenderer(InputManager, ConfigurationState.Instance.Logger.GraphicsDebugLevel);
             }
@@ -1031,7 +1038,7 @@ namespace Ryujinx.Ui
             Graphics.Gpu.GraphicsConfig.ResScale          = (resScale == -1) ? resScaleCustom : resScale;
             Graphics.Gpu.GraphicsConfig.MaxAnisotropy     = ConfigurationState.Instance.Graphics.MaxAnisotropy;
             Graphics.Gpu.GraphicsConfig.ShadersDumpPath   = ConfigurationState.Instance.Graphics.ShadersDumpPath;
-            Graphics.Gpu.GraphicsConfig.EnableShaderCache = ConfigurationState.Instance.Graphics.EnableShaderCache;
+            Graphics.Gpu.GraphicsConfig.EnableShaderCache = ConfigurationState.Instance.Graphics.EnableShaderCache && ConfigurationState.Instance.Graphics.GraphicsBackend != GraphicsBackend.Vulkan;
         }
 
         public void SaveConfig()
@@ -1122,6 +1129,7 @@ namespace Ryujinx.Ui
                 _gpuName.Text      = args.GpuName;
                 _dockedMode.Text   = args.DockedMode;
                 _aspectRatio.Text  = args.AspectRatio;
+                _gpuBackend.Text   = args.GpuBackend;
                 _volumeStatus.Text = GetVolumeLabelText(args.Volume);
 
                 if (args.VSyncEnabled)
@@ -1209,7 +1217,7 @@ namespace Ryujinx.Ui
         {
             AspectRatio aspectRatio = ConfigurationState.Instance.Graphics.AspectRatio.Value;
 
-            ConfigurationState.Instance.Graphics.AspectRatio.Value = ((int)aspectRatio + 1) > Enum.GetNames(typeof(AspectRatio)).Length - 1 ? AspectRatio.Fixed4x3 : aspectRatio + 1;
+            ConfigurationState.Instance.Graphics.AspectRatio.Value = ((int)aspectRatio + 1) > Enum.GetNames<AspectRatio>().Length - 1 ? AspectRatio.Fixed4x3 : aspectRatio + 1;
         }
 
         private void Row_Clicked(object sender, ButtonReleaseEventArgs args)
@@ -1291,7 +1299,7 @@ namespace Ryujinx.Ui
 
         private void OpenLogsFolder_Pressed(object sender, EventArgs args)
         {
-            string logPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs");
+            string logPath = System.IO.Path.Combine(ReleaseInformations.GetBaseApplicationDirectory(), "Logs");
 
             new DirectoryInfo(logPath).Create();
 
@@ -1531,6 +1539,13 @@ namespace Ryujinx.Ui
         private void StartFullScreen_Toggled(object sender, EventArgs args)
         {
             ConfigurationState.Instance.Ui.StartFullscreen.Value = _startFullScreen.Active;
+
+            SaveConfig();
+        }
+
+        private void ShowConsole_Toggled(object sender, EventArgs args)
+        {
+            ConfigurationState.Instance.Ui.ShowConsole.Value = _showConsole.Active;
 
             SaveConfig();
         }

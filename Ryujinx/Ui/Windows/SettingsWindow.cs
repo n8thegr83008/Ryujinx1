@@ -35,6 +35,7 @@ namespace Ryujinx.Ui.Windows
         private float _previousVolumeLevel;
 
 #pragma warning disable CS0649, IDE0044
+        [GUI] CheckButton     _traceLogToggle;
         [GUI] CheckButton     _errorLogToggle;
         [GUI] CheckButton     _warningLogToggle;
         [GUI] CheckButton     _infoLogToggle;
@@ -90,6 +91,7 @@ namespace Ryujinx.Ui.Windows
         [GUI] Entry           _graphicsShadersDumpPath;
         [GUI] ComboBoxText    _anisotropy;
         [GUI] ComboBoxText    _aspectRatio;
+        [GUI] ComboBoxText    _graphicsBackend;
         [GUI] ComboBoxText    _resScaleCombo;
         [GUI] Entry           _resScaleText;
         [GUI] ToggleButton    _configureController1;
@@ -141,6 +143,11 @@ namespace Ryujinx.Ui.Windows
             };
 
             // Setup Currents.
+            if (ConfigurationState.Instance.Logger.EnableTrace)
+            {
+                _traceLogToggle.Click();
+            }
+
             if (ConfigurationState.Instance.Logger.EnableFileLog)
             {
                 _fileLogToggle.Click();
@@ -181,7 +188,7 @@ namespace Ryujinx.Ui.Windows
                 _fsAccessLogToggle.Click();
             }
 
-            foreach (GraphicsDebugLevel level in Enum.GetValues(typeof(GraphicsDebugLevel)))
+            foreach (GraphicsDebugLevel level in Enum.GetValues<GraphicsDebugLevel>())
             {
                 _graphicsDebugLevel.Append(level.ToString(), level.ToString());
             }
@@ -315,6 +322,7 @@ namespace Ryujinx.Ui.Windows
             _resScaleCombo.SetActiveId(ConfigurationState.Instance.Graphics.ResScale.Value.ToString());
             _anisotropy.SetActiveId(ConfigurationState.Instance.Graphics.MaxAnisotropy.Value.ToString());
             _aspectRatio.SetActiveId(((int)ConfigurationState.Instance.Graphics.AspectRatio.Value).ToString());
+            _graphicsBackend.SetActiveId(((int)ConfigurationState.Instance.Graphics.GraphicsBackend.Value).ToString());
 
             _custThemePath.Buffer.Text           = ConfigurationState.Instance.Ui.CustomThemePath;
             _resScaleText.Buffer.Text            = ConfigurationState.Instance.Graphics.ResScaleCustom.Value.ToString();
@@ -487,6 +495,7 @@ namespace Ryujinx.Ui.Windows
             }
 
             ConfigurationState.Instance.Logger.EnableError.Value               = _errorLogToggle.Active;
+            ConfigurationState.Instance.Logger.EnableTrace.Value               = _traceLogToggle.Active;
             ConfigurationState.Instance.Logger.EnableWarn.Value                = _warningLogToggle.Active;
             ConfigurationState.Instance.Logger.EnableInfo.Value                = _infoLogToggle.Active;
             ConfigurationState.Instance.Logger.EnableStub.Value                = _stubLogToggle.Active;
@@ -521,6 +530,7 @@ namespace Ryujinx.Ui.Windows
             ConfigurationState.Instance.Graphics.MaxAnisotropy.Value           = float.Parse(_anisotropy.ActiveId, CultureInfo.InvariantCulture);
             ConfigurationState.Instance.Graphics.AspectRatio.Value             = Enum.Parse<AspectRatio>(_aspectRatio.ActiveId);
             ConfigurationState.Instance.Graphics.BackendThreading.Value        = backendThreading;
+            ConfigurationState.Instance.Graphics.GraphicsBackend.Value         = Enum.Parse<GraphicsBackend>(_graphicsBackend.ActiveId);
             ConfigurationState.Instance.Graphics.ResScale.Value                = int.Parse(_resScaleCombo.ActiveId);
             ConfigurationState.Instance.Graphics.ResScaleCustom.Value          = resScaleCustom;
             ConfigurationState.Instance.System.AudioVolume.Value               = (float)_audioVolumeSlider.Value / 100.0f;

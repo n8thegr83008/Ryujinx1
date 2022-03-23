@@ -14,7 +14,7 @@ namespace Ryujinx.Configuration
         /// <summary>
         /// The current version of the file format
         /// </summary>
-        public const int CurrentVersion = 35;
+        public const int CurrentVersion = 37;
 
         /// <summary>
         /// Version of the configuration file format
@@ -80,6 +80,11 @@ namespace Ryujinx.Configuration
         /// Enables printing error log messages
         /// </summary>
         public bool LoggingEnableError { get; set; }
+
+        /// <summary>
+        /// Enables printing trace log messages
+        /// </summary>
+        public bool LoggingEnableTrace { get; set; }
 
         /// <summary>
         /// Enables printing guest log messages
@@ -232,6 +237,11 @@ namespace Ryujinx.Configuration
         public bool StartFullscreen { get; set; }
 
         /// <summary>
+        /// Show console window
+        /// </summary>
+        public bool ShowConsole { get; set; }
+
+        /// <summary>
         /// Enable or disable keyboard support (Independent from controllers binding)
         /// </summary>
         public bool EnableKeyboard { get; set; }
@@ -264,6 +274,11 @@ namespace Ryujinx.Configuration
         /// Input configurations
         /// </summary>
         public List<InputConfig> InputConfig { get; set; }
+
+        /// <summary>
+        /// Graphics backend
+        /// </summary>
+        public GraphicsBackend GraphicsBackend { get; set; }
 
         /// <summary>
         /// Loads a configuration file from disk

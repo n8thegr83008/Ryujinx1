@@ -1,7 +1,7 @@
 ﻿using Ryujinx.Common;
-using Ryujinx.Common.Logging;
 using Ryujinx.Graphics.Device;
 using Ryujinx.Graphics.Gpu.Engine.Threed;
+using Ryujinx.Graphics.Gpu.Memory;
 using Ryujinx.Graphics.Texture;
 using System;
 using System.Collections.Generic;
@@ -85,9 +85,7 @@ namespace Ryujinx.Graphics.Gpu.Engine.Dma
                 }
 
                 int alignWidth = Constants.StrideAlignment / bpp;
-                return tex.RegionX == 0 &&
-                       tex.RegionY == 0 &&
-                       stride / bpp == BitUtils.AlignUp(xCount, alignWidth);
+                return stride / bpp == BitUtils.AlignUp(xCount, alignWidth);
             }
             else
             {
@@ -115,7 +113,8 @@ namespace Ryujinx.Graphics.Gpu.Engine.Dma
                 }
                 else /* if (type == LaunchDmaSemaphoreType.ReleaseFourWordSemaphore) */
                 {
-                    Logger.Warning?.Print(LogClass.Gpu, "DMA semaphore type ReleaseFourWordSemaphore was used, but is not currently implemented.");
+                    _channel.MemoryManager.Write(address + 8, _context.GetTimestamp());
+                    _channel.MemoryManager.Write(address, (ulong)_state.State.SetSemaphorePayload);
                 }
             }
         }
@@ -160,6 +159,20 @@ namespace Ryujinx.Graphics.Gpu.Engine.Dma
                 var dst = Unsafe.As<uint, DmaTexture>(ref _state.State.SetDstBlockSize);
                 var src = Unsafe.As<uint, DmaTexture>(ref _state.State.SetSrcBlockSize);
 
+                int srcRegionX = 0, srcRegionY = 0, dstRegionX = 0, dstRegionY = 0;
+
+                if (!srcLinear)
+                {
+                    srcRegionX = src.RegionX;
+                    srcRegionY = src.RegionY;
+                }
+
+                if (!dstLinear)
+                {
+                    dstRegionX = dst.RegionX;
+                    dstRegionY = dst.RegionY;
+                }
+
                 int srcStride = (int)_state.State.PitchIn;
                 int dstStride = (int)_state.State.PitchOut;
 
@@ -181,8 +194,8 @@ namespace Ryujinx.Graphics.Gpu.Engine.Dma
                     dst.MemoryLayout.UnpackGobBlocksInZ(),
                     dstBpp);
 
-                (int srcBaseOffset, int srcSize) = srcCalculator.GetRectangleRange(src.RegionX, src.RegionY, xCount, yCount);
-                (int dstBaseOffset, int dstSize) = dstCalculator.GetRectangleRange(dst.RegionX, dst.RegionY, xCount, yCount);
+                (int srcBaseOffset, int srcSize) = srcCalculator.GetRectangleRange(srcRegionX, srcRegionY, xCount, yCount);
+                (int dstBaseOffset, int dstSize) = dstCalculator.GetRectangleRange(dstRegionX, dstRegionY, xCount, yCount);
 
                 if (srcLinear && srcStride < 0)
                 {
@@ -271,13 +284,13 @@ namespace Ryujinx.Graphics.Gpu.Engine.Dma
 
                         for (int y = 0; y < yCount; y++)
                         {
-                            srcCalculator.SetY(src.RegionY + y);
-                            dstCalculator.SetY(dst.RegionY + y);
+                            srcCalculator.SetY(srcRegionY + y);
+                            dstCalculator.SetY(dstRegionY + y);
 
                             for (int x = 0; x < xCount; x++)
                             {
-                                int srcOffset = srcCalculator.GetOffset(src.RegionX + x);
-                                int dstOffset = dstCalculator.GetOffset(dst.RegionX + x);
+                                int srcOffset = srcCalculator.GetOffset(srcRegionX + x);
+                                int dstOffset = dstCalculator.GetOffset(dstRegionX + x);
 
                                 *(T*)(dstBase + dstOffset) = *(T*)(srcBase + srcOffset);
                             }
@@ -317,9 +330,93 @@ namespace Ryujinx.Graphics.Gpu.Engine.Dma
                 {
                     // TODO: Implement remap functionality.
                     // Buffer to buffer copy.
-                    memoryManager.Physical.BufferCache.CopyBuffer(memoryManager, srcGpuVa, dstGpuVa, size);
+
+                    bool srcIsPitchKind = memoryManager.GetKind(srcGpuVa).IsPitch();
+                    bool dstIsPitchKind = memoryManager.GetKind(dstGpuVa).IsPitch();
+
+                    if (!srcIsPitchKind && dstIsPitchKind)
+                    {
+                        CopyGobBlockLinearToLinear(memoryManager, srcGpuVa, dstGpuVa, size);
+                    }
+                    else if (srcIsPitchKind && !dstIsPitchKind)
+                    {
+                        CopyGobLinearToBlockLinear(memoryManager, srcGpuVa, dstGpuVa, size);
+                    }
+                    else
+                    {
+                        memoryManager.Physical.BufferCache.CopyBuffer(memoryManager, srcGpuVa, dstGpuVa, size);
+                    }
                 }
             }
+        }
+
+        /// <summary>
+        /// Copies block linear data with block linear GOBs to a block linear destination with linear GOBs.
+        /// </summary>
+        /// <param name="memoryManager">GPU memory manager</param>
+        /// <param name="srcGpuVa">Source GPU virtual address</param>
+        /// <param name="dstGpuVa">Destination GPU virtual address</param>
+        /// <param name="size">Size in bytes of the copy</param>
+        private static void CopyGobBlockLinearToLinear(MemoryManager memoryManager, ulong srcGpuVa, ulong dstGpuVa, ulong size)
+        {
+            if (((srcGpuVa | dstGpuVa | size) & 0xf) == 0)
+            {
+                for (ulong offset = 0; offset < size; offset += 16)
+                {
+                    Vector128<byte> data = memoryManager.Read<Vector128<byte>>(ConvertGobLinearToBlockLinearAddress(srcGpuVa + offset), true);
+                    memoryManager.Write(dstGpuVa + offset, data);
+                }
+            }
+            else
+            {
+                for (ulong offset = 0; offset < size; offset++)
+                {
+                    byte data = memoryManager.Read<byte>(ConvertGobLinearToBlockLinearAddress(srcGpuVa + offset), true);
+                    memoryManager.Write(dstGpuVa + offset, data);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Copies block linear data with linear GOBs to a block linear destination with block linear GOBs.
+        /// </summary>
+        /// <param name="memoryManager">GPU memory manager</param>
+        /// <param name="srcGpuVa">Source GPU virtual address</param>
+        /// <param name="dstGpuVa">Destination GPU virtual address</param>
+        /// <param name="size">Size in bytes of the copy</param>
+        private static void CopyGobLinearToBlockLinear(MemoryManager memoryManager, ulong srcGpuVa, ulong dstGpuVa, ulong size)
+        {
+            if (((srcGpuVa | dstGpuVa | size) & 0xf) == 0)
+            {
+                for (ulong offset = 0; offset < size; offset += 16)
+                {
+                    Vector128<byte> data = memoryManager.Read<Vector128<byte>>(srcGpuVa + offset, true);
+                    memoryManager.Write(ConvertGobLinearToBlockLinearAddress(dstGpuVa + offset), data);
+                }
+            }
+            else
+            {
+                for (ulong offset = 0; offset < size; offset++)
+                {
+                    byte data = memoryManager.Read<byte>(srcGpuVa + offset, true);
+                    memoryManager.Write(ConvertGobLinearToBlockLinearAddress(dstGpuVa + offset), data);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Calculates the GOB block linear address from a linear address.
+        /// </summary>
+        /// <param name="address">Linear address</param>
+        /// <returns>Block linear address</returns>
+        private static ulong ConvertGobLinearToBlockLinearAddress(ulong address)
+        {
+            // y2 y1 y0 x5 x4 x3 x2 x1 x0 -> x5 y2 y1 x4 y0 x3 x2 x1 x0
+            return (address & ~0x1f0UL) |
+                ((address & 0x40) >> 2) |
+                ((address & 0x10) << 1) |
+                ((address & 0x180) >> 1) |
+                ((address & 0x20) << 3);
         }
 
         /// <summary>

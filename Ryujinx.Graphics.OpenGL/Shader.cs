@@ -1,16 +1,38 @@
 using OpenTK.Graphics.OpenGL;
 using Ryujinx.Graphics.GAL;
 using Ryujinx.Graphics.Shader;
+using System;
 
 namespace Ryujinx.Graphics.OpenGL
 {
     class Shader : IShader
     {
         public int Handle { get; private set; }
+        public bool IsFragment { get; }
 
         public Shader(ShaderStage stage, string code)
         {
-            ShaderType type = stage switch
+            Handle = GL.CreateShader(GetShaderType(stage));
+            IsFragment = stage == ShaderStage.Fragment;
+
+            GL.ShaderSource(Handle, code);
+            GL.CompileShader(Handle);
+        }
+
+        public Shader(ShaderStage stage, byte[] code)
+        {
+            int handle = GL.CreateShader(GetShaderType(stage));
+
+            Handle = handle;
+            IsFragment = stage == ShaderStage.Fragment;
+
+            GL.ShaderBinary(1, ref handle, (BinaryFormat)All.ShaderBinaryFormatSpirVArb, code, code.Length);
+            GL.SpecializeShader(handle, "main", 0, (int[])null, (int[])null);
+        }
+
+        private static ShaderType GetShaderType(ShaderStage stage)
+        {
+            return stage switch
             {
                 ShaderStage.Compute => ShaderType.ComputeShader,
                 ShaderStage.Vertex => ShaderType.VertexShader,
@@ -20,11 +42,6 @@ namespace Ryujinx.Graphics.OpenGL
                 ShaderStage.Fragment => ShaderType.FragmentShader,
                 _ => ShaderType.VertexShader
             };
-
-            Handle = GL.CreateShader(type);
-
-            GL.ShaderSource(Handle, code);
-            GL.CompileShader(Handle);
         }
 
         public void Dispose()
